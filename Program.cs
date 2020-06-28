@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 
 namespace uss_champlin_scraper
@@ -48,20 +49,36 @@ namespace uss_champlin_scraper
 
             _logger.LogInformation($"Count of Crew: {crewUrls.Count}");
 
-            // var test = await GetCrew("https://www.usschamplin.com/crew_ag/WilliamDGustin.html");
-            // var test2 = await GetCrew("https://www.usschamplin.com/crew_ag/ChaddArthurB.html");
-            // var test3 = await GetCrew("https://www.usschamplin.com/crew_ag/ChiassonGilbertn.html");
             List<Crew> crewList = new List<Crew>();
             foreach(var url in crewUrls)
             {
                 crewList.Add(await GetCrew(url));
             }
+
+            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/WilliamDGustin.html"));
+            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/ChaddArthurB.html"));
+            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/ChiassonGilbertn.html"));
+            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/GeraldMCruthers.html"));
+            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/LouisGilbert.html"));
+
             crewList = crewList.Where(x => !KnownIssues.Contains(x.OriginalUrl)).ToList();
 
             _logger.LogInformation($"Crew found: {crewList.Count}");
             _logger.LogInformation($"Issues list: {KnownIssues.Count}");
 
             Thread.Sleep(2000);
+            await WriteDataToFile(JsonSerializer.Serialize(crewList), "CrewList.json");
+            await WriteDataToFile(JsonSerializer.Serialize(KnownIssues), "IssuesList.json");
+
+
+        }
+        
+        static async Task WriteDataToFile(string data, string fileName)
+        {
+            using(System.IO.StreamWriter file = new System.IO.StreamWriter(fileName))
+            {
+                await file.WriteAsync(data);
+            }
         }
 
         static void CheckCrew(Crew c)
@@ -80,7 +97,7 @@ namespace uss_champlin_scraper
             var doc = await _browser.LoadFromWebAsync(url);
             
             var pageLinks = doc.DocumentNode.Descendants("a")
-                            .Select(x => x.GetAttributeValue("href", ""))
+                            .Select(x => x.GetAttributeValue("href", "").Trim())
                             .Where(x => !PageNav.Contains(x))
                             .ToList();
 
@@ -98,9 +115,12 @@ namespace uss_champlin_scraper
                 crew.OriginalUrl = url;
                 
                 crew.Name = ParseString(doc, "/html[1]/body[1]/div[1]/table[1]/tr[1]/td[2]/p[1]/u[1]");
+                
+                crew.PictureUrl = ParseImageSrc(doc, "/html[1]/body[1]/div[1]/table[1]/tr[1]/td[1]/img[1]");
 
                 crew.DateOfBirth = ParseString(doc, "/html[1]/body[1]/div[1]/table[1]/tr[1]/td[2]/p[2]/text()[2]");
 
+                //not included for most entries... just gustin.
                 // crew.PlaceOfBirth = ParseString(doc, "/html[1]/body[1]/div[1]/table[1]/tr[1]/td[2]/p[2]/text()[4]" );
                                 
                 crew.ServiceNumber = ParseString(doc, "/html[1]/body[1]/div[1]/table[1]/tr[1]/td[2]/p[2]/text()[5]");
@@ -119,6 +139,10 @@ namespace uss_champlin_scraper
 
                 crew.DateOfDeath = ParseString(doc, "/html[1]/body[1]/div[1]/table[1]/tr[1]/td[2]/p[2]/text()[19]");
                 
+                crew.PostWarExperience = ParseString(doc, "/html[1]/body[1]/div[1]/table[2]/tr[2]/td[1]")?.Replace("Post World War II Life Experience:\n\n\n", "");
+
+                ParsePersonalDetails(doc, crew);
+
                 CheckCrew(crew);
                 return crew;
             }
@@ -132,6 +156,86 @@ namespace uss_champlin_scraper
             }
         }
 
+        static void ParsePersonalDetails(HtmlDocument doc, Crew c)
+        {
+            var detailsTable = doc.DocumentNode.SelectSingleNode("/html[1]/body[1]/div[1]/table[2]/tr[1]");
+            if(detailsTable != null && !detailsTable.InnerText.Contains("To submit additions, corrections, or to contribute photos"))
+            {
+                
+                var text = detailsTable.InnerText;
+
+                c.Spouse = ExtractString(text, "Wife:","Children:")?.Trim();
+                c.Children = ExtractStringList(text, "Children:","Grandchildren:");
+                c.Grandchildren = ExtractStringList(text, "Grandchildren:","Great Grandchildren:");    
+                c.GreatGrandchildren = ExtractStringList(text, "Great Grandchildren:","High School:");
+
+                //this would be better with regex but mine kept breaking. doing it the quick and dirty way instead.
+                c.HighSchool = ExtractStringList(text, "High School:", "College:", "Interests and Hobbies:"); 
+                c.College = ExtractStringList(text, "College:", "Interests and Hobbies:", "$"); 
+                c.Interests = ExtractStringList(text, "Interests and Hobbies:", "$"); 
+                
+            }
+            
+            return;
+        }
+
+
+        static List<string> ExtractStringList(string text, string start, string end, string alternativeEnd = "")
+        {
+            List<string> list = new List<string>();
+
+            string results = ExtractString(text, start, end, alternativeEnd);
+
+            var arrayResults = results?.Trim().Split("\n");
+            foreach(var r in arrayResults)
+            {
+                if(r.Length > 0)
+                {
+                    list.Add(r.Trim());
+                }
+            }
+
+            return list;
+
+        }
+
+        static string ExtractString(string text, string start, string end, string alternativeEnd = "")
+        {
+            int startIndex =  -1;
+            if (text.IndexOf(start) >= 0)
+                startIndex = text.IndexOf(start) + start.Length;
+            if(startIndex < 0)
+                return "";
+
+            int endIndex = -1;
+            if(end == "$")
+            {
+                endIndex = text.Length;
+            }
+            else
+            {
+                endIndex = text.IndexOf(end, startIndex);
+            }
+            if(endIndex < 0 && !String.IsNullOrEmpty(alternativeEnd))
+            {
+                if(alternativeEnd == "$")
+                {
+                    endIndex = text.Length;
+                }
+                else
+                {
+                    endIndex = text.IndexOf(alternativeEnd, startIndex);
+                }
+            }
+
+            if(endIndex < 0 )
+            {
+                return "";
+            }
+            return text.Substring(startIndex, endIndex - startIndex);
+        }
+
+
         static DateTime ParseDateTime(HtmlDocument doc, string path)
         {
             var dateText = ParseString(doc, path);
@@ -143,6 +247,11 @@ namespace uss_champlin_scraper
                             .InnerText
                             .Replace("&nbsp;","")
                             .Trim();
+        }
+
+        static string ParseImageSrc(HtmlDocument doc, string path)
+        {
+            return doc.DocumentNode.SelectSingleNode(path)?.GetAttributeValue("src", "");
         }
 
     }

@@ -17,7 +17,7 @@ public class Crew
     public string DateDischarged { get; set; }
     public string DateOfDeath { get; set; }
     public string Spouse { get; set; }
-    public string HighSchool { get; set; }
+    public List<string> HighSchool { get; set; }
     public List<string> Children { get; set; }
     public List<string> College { get; set; }
     public List<string> Grandchildren { get; set; }
