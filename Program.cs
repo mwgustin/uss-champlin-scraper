@@ -12,18 +12,14 @@ namespace uss_champlin_scraper
 {
     class Program
     {
-        // static ScrapingBrowser _browser = new ScrapingBrowser();
-
         static HtmlWeb _browser = new HtmlWeb();
-        
         static List<string> PageNav = new List<string>();
-
         static List<string> KnownIssues = new List<string>();
 
         static ILogger _logger;
         static async Task Main(string[] args)
         {
-            //logger
+            //setup logger
             var fac = LoggerFactory.Create(builder => 
             {
                 builder
@@ -35,44 +31,50 @@ namespace uss_champlin_scraper
             
             _logger = fac.CreateLogger<Program>();
             
+            //startup
             _logger.LogCritical("Beginning");
             Thread.Sleep(2000);
             
-            //get default nav URLs from history page.
+            //get default nav URLs from history page so we can ignore them.
             PageNav = await GetAllUrls("https://www.usschamplin.com/page2.html");
 
+            //get all crew page urls
             var crewUrls = await GetAllUrls("https://www.usschamplin.com/page4.html");
-
             crewUrls.AddRange(await GetAllUrls("https://www.usschamplin.com/page6.html"));
             crewUrls.AddRange(await GetAllUrls("https://www.usschamplin.com/page7.html"));
             crewUrls.AddRange(await GetAllUrls("https://www.usschamplin.com/page8.html"));
 
             _logger.LogInformation($"Count of Crew: {crewUrls.Count}");
 
+
+            // parse out crew details for each link in list.
             List<Crew> crewList = new List<Crew>();
             foreach(var url in crewUrls)
             {
                 crewList.Add(await GetCrew(url));
             }
 
-            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/WilliamDGustin.html"));
-            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/ChaddArthurB.html"));
-            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/ChiassonGilbertn.html"));
-            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/GeraldMCruthers.html"));
-            // crewList.Add( await GetCrew("https://www.usschamplin.com/crew_ag/LouisGilbert.html"));
-
+            // make sure we remove any we may have flagged as problematic
             crewList = crewList.Where(x => !KnownIssues.Contains(x.OriginalUrl)).ToList();
 
             _logger.LogInformation($"Crew found: {crewList.Count}");
             _logger.LogInformation($"Issues list: {KnownIssues.Count}");
 
             Thread.Sleep(2000);
+
+            //write out the crew json and issues list.
             await WriteDataToFile(JsonSerializer.Serialize(crewList), "CrewList.json");
             await WriteDataToFile(JsonSerializer.Serialize(KnownIssues), "IssuesList.json");
 
 
         }
         
+        /// <summary>
+        /// Simple helper to write data to file
+        /// </summary>
+        /// <param name="data"></param>
+        /// <param name="fileName"></param>
+        /// <returns></returns>
         static async Task WriteDataToFile(string data, string fileName)
         {
             using(System.IO.StreamWriter file = new System.IO.StreamWriter(fileName))
@@ -81,6 +83,10 @@ namespace uss_champlin_scraper
             }
         }
 
+        /// <summary>
+        /// Helper to validate Crew data with common params. If problematic, add to issues list.
+        /// </summary>
+        /// <param name="c"></param>
         static void CheckCrew(Crew c)
         {
             if( String.IsNullOrEmpty(c.DateOfEnlistment)
@@ -92,6 +98,11 @@ namespace uss_champlin_scraper
             }
         }
 
+        /// <summary>
+        /// Fetch all URLs from a webpage
+        /// </summary>
+        /// <param name="url"></param>
+        /// <returns></returns>
         static async Task<List<string>> GetAllUrls(string url)
         {
             var doc = await _browser.LoadFromWebAsync(url);
@@ -104,10 +115,16 @@ namespace uss_champlin_scraper
             return pageLinks;
         }
 
+        /// <summary>
+        /// Parse crew from a crew webpage link
+        /// </summary>
+        /// <param name="url"></param>
+        /// <returns></returns>
         static async Task<Crew> GetCrew(string url)
         {
             try 
             {
+
                 var doc = await _browser.LoadFromWebAsync(url);
             
                 var crew = new Crew();
@@ -148,6 +165,7 @@ namespace uss_champlin_scraper
             }
             catch(Exception e)
             {
+                // if there's an exception, log it and add to issues list for manual processing.
                 _logger.LogError($"ERROR - {e.Message}");
                 var crew = new Crew();
                 crew.OriginalUrl = url;
@@ -156,6 +174,11 @@ namespace uss_champlin_scraper
             }
         }
 
+        /// <summary>
+        /// If crew member has additional personal details, parse those.
+        /// </summary>
+        /// <param name="doc"></param>
+        /// <param name="c"></param>
         static void ParsePersonalDetails(HtmlDocument doc, Crew c)
         {
             var detailsTable = doc.DocumentNode.SelectSingleNode("/html[1]/body[1]/div[1]/table[2]/tr[1]");
@@ -179,7 +202,14 @@ namespace uss_champlin_scraper
             return;
         }
 
-
+        /// <summary>
+        /// Parse a substring into a list of items (ie list of children)
+        /// </summary>
+        /// <param name="text"></param>
+        /// <param name="start"></param>
+        /// <param name="end"></param>
+        /// <param name="alternativeEnd"></param>
+        /// <returns></returns>
         static List<string> ExtractStringList(string text, string start, string end, string alternativeEnd = "")
         {
             List<string> list = new List<string>();
@@ -199,6 +229,14 @@ namespace uss_champlin_scraper
 
         }
 
+        /// <summary>
+        /// parse substring. alternative end lets you specify an alternative if end isn't found.
+        /// </summary>
+        /// <param name="text"></param>
+        /// <param name="start"></param>
+        /// <param name="end"></param>
+        /// <param name="alternativeEnd"></param>
+        /// <returns></returns>
         static string ExtractString(string text, string start, string end, string alternativeEnd = "")
         {
             int startIndex =  -1;
@@ -235,12 +273,12 @@ namespace uss_champlin_scraper
             return text.Substring(startIndex, endIndex - startIndex);
         }
 
-
-        static DateTime ParseDateTime(HtmlDocument doc, string path)
-        {
-            var dateText = ParseString(doc, path);
-            return !String.IsNullOrEmpty(dateText) ? DateTime.Parse(dateText) : DateTime.MinValue;
-        }
+        /// <summary>
+        /// Parse out a string result from an xPath
+        /// </summary>
+        /// <param name="doc"></param>
+        /// <param name="path"></param>
+        /// <returns></returns>
         static string ParseString(HtmlDocument doc, string path)
         {
             return doc.DocumentNode.SelectSingleNode(path)?
@@ -249,6 +287,12 @@ namespace uss_champlin_scraper
                             .Trim();
         }
 
+        /// <summary>
+        /// Get image source from xPath
+        /// </summary>
+        /// <param name="doc"></param>
+        /// <param name="path"></param>
+        /// <returns></returns>
         static string ParseImageSrc(HtmlDocument doc, string path)
         {
             return doc.DocumentNode.SelectSingleNode(path)?.GetAttributeValue("src", "");

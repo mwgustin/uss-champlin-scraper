@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
 
+
+/// <summary>
+/// Class to contain crew details. Set all to string b/c of the inconsistency in data.
+/// </summary>
 public class Crew
 {
     public string OriginalUrl { get; set; }
